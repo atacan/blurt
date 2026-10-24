@@ -1,0 +1,40 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/atacan/Developer/Repositories/blurt/.codex/hooks/protect-pbxproj.sh'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/atacan/Developer/Repositories/blurt/.codex/hooks/swift-format.sh'"
+          },
+          {
+            "type": "command",
+            "command": "'/Users/atacan/Developer/Repositories/blurt/.codex/hooks/swiftlint.sh'"
+          }
+        ]
+      }
+    ],
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "'/Users/atacan/Developer/Repositories/blurt/.codex/hooks/session-start.sh'"
+          }
+        ]
+      }
+    ]
+  }
+}
