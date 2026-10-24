@@ -9,17 +9,21 @@ struct DictationTimingTests {
   func timelineArithmetic() throws {
     let stored = RecordedTimings()
     let start = ContinuousClock.now
-    let trace = stored.trace(at: start, now: { start }, date: Date(timeIntervalSince1970: 1000))
+    let clock = TestClock()
+    let trace = stored.trace(
+      at: start, now: { start.advanced(by: clock.now.offset) }, date: Date(timeIntervalSince1970: 1000))
     let events: [(DictationTiming.Event, Int)] = [
-      (.captureRequested, 5), (.recorderStartRequested, 10), (.firstAudioCaptured, 110),
+      (.captureRequested, 5), (.recorderStartRequested, 10), (.recorderStartReturned, 70),
       (.recordingReady, 140), (.httpRequestStarted, 160), (.stopShortcut, 1000),
       (.captureStopRequested, 1010), (.recordingStopped, 1230), (.responseReceived, 1500),
       (.jsonDecodeStarted, 1510), (.jsonDecodeCompleted, 1512),
     ]
     for (event, ms) in events { trace.record(event, at: start.advanced(by: .milliseconds(ms))) }
+    clock.advance(by: .milliseconds(110))
+    trace.recordFirstBuffer(sampleCount: 320, sampleRateHz: 16_000, callbackAt: start.advanced(by: .milliseconds(105)))
     trace.finish(outcome: .pasted)
     let entry = try #require(stored.entries.first)
-    #expect(entry.eventsMs.count == 12)
+    #expect(entry.eventsMs.count == 14)
     #expect(entry.eventsMs["start_shortcut"] == 0)
     #expect(entry.eventsMs["json_decode_completed"] == 1512)
     #expect(
@@ -27,10 +31,13 @@ struct DictationTimingTests {
         "startup": 110, "recorder_bring_up": 100, "first_buffer_to_ready": 30,
         "capture_to_request": 50, "stop": 230, "stop_to_response": 270,
         "json_decode": 2, "stop_to_decoded_result": 512,
+        "recorder_start_call": 60, "start_return_to_first_buffer": 35, "first_buffer_processing": 5,
       ])
     let encoded = try DictationLog.makeEncoder().encode(entry)
     let object = try #require(JSONSerialization.jsonObject(with: encoded) as? [String: Any])
-    #expect(Set(object.keys) == ["id", "ts", "outcome", "events_ms", "durations_ms"])
+    #expect(Set(object.keys) == ["id", "ts", "outcome", "events_ms", "durations_ms", "first_buffer"])
+    let buffer = try #require(object["first_buffer"] as? [String: Double])
+    #expect(buffer == ["sample_count": 320, "sample_rate_hz": 16_000, "audio_duration_ms": 20])
     #expect(entry.ts == Date(timeIntervalSince1970: 1000).formatted(DictationLog.timestampFormat))
   }
 

@@ -218,6 +218,7 @@ final class CaptureSessionRecorder: NSObject, @unchecked Sendable {
       Self.controlQueue.async {
         self.timing?.record(.recorderStartRequested)
         self.session.startRunning()
+        self.timing?.record(.recorderStartReturned)
         continuation.resume(returning: self.session.isRunning)
       }
     }
@@ -364,6 +365,7 @@ extension CaptureSessionRecorder: AVCaptureAudioDataOutputSampleBufferDelegate {
     _ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer,
     from connection: AVCaptureConnection
   ) {
+    let callbackAt = timing.map { _ in ContinuousClock.now }
     guard let blockBuffer = CMSampleBufferGetDataBuffer(sampleBuffer) else { return }
     let length = CMBlockBufferGetDataLength(blockBuffer)
     guard length > 0 else { return }
@@ -372,7 +374,12 @@ extension CaptureSessionRecorder: AVCaptureAudioDataOutputSampleBufferDelegate {
     guard let chunk = Self.copyBytes(from: blockBuffer, length: length) else { return }
     let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
     state.withLock {
-      if $0.capturedBytes == 0 { timing?.record(.firstAudioCaptured) }
+      if $0.capturedBytes == 0, let timing, let callbackAt {
+        let sampleRate = CMSampleBufferGetFormatDescription(sampleBuffer).flatMap {
+          CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee.mSampleRate
+        }
+        timing.recordFirstBuffer(sampleCount: frameCount, sampleRateHz: sampleRate, callbackAt: callbackAt)
+      }
       $0.capturedBytes += chunk.count
       $0.frameCount += frameCount
       // Published *under* the lock, together with the tally, because the two

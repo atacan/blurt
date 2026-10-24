@@ -26,6 +26,7 @@ struct DictationTimingLogTests {
     let decoded = try JSONDecoder().decode(DictationTiming.Entry.self, from: data)
     #expect(decoded.id == entry.id)
     #expect(decoded.eventsMs.isEmpty)
+    #expect(decoded.firstBuffer == nil)
     #expect(decoded.outcome == .empty)
     #expect(DictationLog.defaultTimingDisplayPath.hasSuffix("Library/Logs/Blurt/timings.jsonl"))
   }

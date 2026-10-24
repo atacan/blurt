@@ -10,6 +10,8 @@ final class DictationTiming: Sendable {
     case startShortcut = "start_shortcut"
     case captureRequested = "capture_requested"
     case recorderStartRequested = "recorder_start_requested"
+    case recorderStartReturned = "recorder_start_returned"
+    case firstAudioCallback = "first_audio_callback"
     case firstAudioCaptured = "first_audio_captured"
     case recordingReady = "recording_ready"
     case httpRequestStarted = "http_request_started"
@@ -25,22 +27,46 @@ final class DictationTiming: Sendable {
     case empty, failed, cancelled, pasted, copied, handedBack, abandoned
   }
 
+  struct FirstBuffer: Codable, Sendable, Equatable {
+    let sampleCount: Int
+    let sampleRateHz: Double
+    let audioDurationMs: Double
+
+    init?(sampleCount: Int, sampleRateHz: Double?) {
+      guard sampleCount > 0, let sampleRateHz, sampleRateHz.isFinite, sampleRateHz > 0 else { return nil }
+      let duration = Double(sampleCount) / sampleRateHz * 1000
+      guard duration.isFinite else { return nil }
+      self.sampleCount = sampleCount
+      self.sampleRateHz = sampleRateHz
+      self.audioDurationMs = duration
+    }
+
+    enum CodingKeys: String, CodingKey {
+      case sampleCount = "sample_count"
+      case sampleRateHz = "sample_rate_hz"
+      case audioDurationMs = "audio_duration_ms"
+    }
+  }
+
   struct Entry: Codable, Sendable {
     let id: UUID
     let ts: String
     let outcome: Outcome
     let eventsMs: [String: Double]
     let durationsMs: [String: Double]
+    let firstBuffer: FirstBuffer?
 
     enum CodingKeys: String, CodingKey {
       case id, ts, outcome
       case eventsMs = "events_ms"
       case durationsMs = "durations_ms"
+      case firstBuffer = "first_buffer"
     }
   }
 
   private struct State {
     var events: [String: Double] = [:]
+    var firstBuffer: FirstBuffer?
     var pendingWork = 0
     var outcome: Outcome?
     var written = false
@@ -78,6 +104,21 @@ final class DictationTiming: Sendable {
     }
   }
 
+  /// Called only for the first buffer accepted by the capture feed. Callback
+  /// arrival precedes copying/locking; captured time retains its original
+  /// meaning. Commit geometry with the events so a later callback cannot replace it.
+  func recordFirstBuffer(sampleCount: Int, sampleRateHz: Double?, callbackAt: ContinuousClock.Instant) {
+    let captured = start.duration(to: now()).milliseconds
+    let callback = start.duration(to: callbackAt).milliseconds
+    let buffer = FirstBuffer(sampleCount: sampleCount, sampleRateHz: sampleRateHz)
+    state.withLock {
+      guard !$0.written, $0.events[Event.firstAudioCaptured.rawValue] == nil else { return }
+      $0.events[Event.firstAudioCallback.rawValue] = callback
+      $0.events[Event.firstAudioCaptured.rawValue] = captured
+      $0.firstBuffer = buffer
+    }
+  }
+
   /// Retain before spawning work, so a fast cancellation cannot finalize before
   /// the new task even gets its first turn. Each owner releases in a defer.
   func beginWork() {
@@ -105,13 +146,16 @@ final class DictationTiming: Sendable {
     state.written = true
     return Entry(
       id: id, ts: timestamp, outcome: outcome,
-      eventsMs: state.events, durationsMs: Self.durations(events: state.events))
+      eventsMs: state.events, durationsMs: Self.durations(events: state.events), firstBuffer: state.firstBuffer)
   }
 
   private static func durations(events: [String: Double]) -> [String: Double] {
     let intervals: [String: (Event, Event)] = [
       "startup": (.startShortcut, .firstAudioCaptured),
       "recorder_bring_up": (.recorderStartRequested, .firstAudioCaptured),
+      "recorder_start_call": (.recorderStartRequested, .recorderStartReturned),
+      "start_return_to_first_buffer": (.recorderStartReturned, .firstAudioCallback),
+      "first_buffer_processing": (.firstAudioCallback, .firstAudioCaptured),
       "first_buffer_to_ready": (.firstAudioCaptured, .recordingReady),
       "capture_to_request": (.firstAudioCaptured, .httpRequestStarted),
       "stop": (.stopShortcut, .recordingStopped),

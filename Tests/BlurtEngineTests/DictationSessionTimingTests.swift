@@ -15,13 +15,16 @@ struct DictationSessionTimingTests {
       return (200, json(["text": "hello"]))
     }
     let session = makeSession(
-      transcriber: makeTranscriber(apiKey: "k", transport: transport), mic: TimedMic(clock: clock),
+      transcriber: makeTranscriber(apiKey: "k", transport: transport), mic: TimedMic(clock: clock, start: start),
       seams: stored.seams(now: { start.advanced(by: clock.now.offset) }))
     await session.press(at: start)
     await session.release(at: start.advanced(by: clock.now.offset))
     await session.awaitPipeline()
     let entry = try #require(stored.entries.first)
-    #expect(entry.eventsMs.count == 12)
+    #expect(entry.eventsMs.count == 14)
+    #expect(entry.durationsMs["recorder_start_call"] == 100)
+    #expect(entry.durationsMs["start_return_to_first_buffer"] == 0)
+    #expect(entry.firstBuffer?.sampleRateHz == 16_000)
     #expect(entry.durationsMs["startup"] == 100)
     #expect(entry.durationsMs["first_buffer_to_ready"] == 30)
     #expect(entry.durationsMs["stop"] == 220)
@@ -120,16 +123,23 @@ struct DictationSessionTimingTests {
 /// readiness/stop boundaries without opening a real device or sleeping.
 private actor TimedMic: MicCaptureProtocol {
   let clock: TestClock
+  let startInstant: ContinuousClock.Instant
   private var timing: DictationTiming?
   private var feed: AsyncStream<Data>.Continuation?
 
-  init(clock: TestClock) { self.clock = clock }
+  init(clock: TestClock, start: ContinuousClock.Instant) {
+    self.clock = clock
+    self.startInstant = start
+  }
 
   func start() async throws -> AsyncStream<Data> {
     timing = DictationTiming.current
     timing?.record(.recorderStartRequested)
     clock.advance(by: .milliseconds(100))
-    timing?.record(.firstAudioCaptured)
+    timing?.record(.recorderStartReturned)
+    timing?.recordFirstBuffer(
+      sampleCount: StubPCM.aboveMinimum.count / SyncSTTLimits.bytesPerSample,
+      sampleRateHz: 16_000, callbackAt: startInstant.advanced(by: clock.now.offset))
     clock.advance(by: .milliseconds(30))
     timing?.record(.recordingReady)
     let (stream, continuation) = AsyncStream<Data>.makeStream()

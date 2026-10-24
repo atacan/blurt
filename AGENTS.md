@@ -1131,7 +1131,8 @@ it holds nothing else.
 in release and development builds. Use Settings › Advanced › Developer mode, then **Show in Finder**.
 Each line carries a unique `id`, wall-clock start `ts`, terminal `outcome`, `events_ms` (monotonic
 millisecond offsets from the start event), and `durations_ms`. It carries no text or audio. The events
-are `start_shortcut`, `capture_requested`, `recorder_start_requested`, `first_audio_captured`,
+are `start_shortcut`, `capture_requested`, `recorder_start_requested`, `recorder_start_returned`,
+`first_audio_callback`, `first_audio_captured`,
 `recording_ready`, `http_request_started`, `stop_shortcut`, `capture_stop_requested`,
 `recording_stopped`, `response_received`, `json_decode_started`, and `json_decode_completed`.
 Shortcut times are captured when the event tap recognizes the action, before routing/queueing;
@@ -1141,6 +1142,15 @@ the full body, before validation/logging. Upload overlaps capture. Durations inc
 (start shortcut → first buffer), `recorder_bring_up`, `first_buffer_to_ready`, `capture_to_request`,
 `stop` (stop shortcut → stopped, including Bluetooth tail linger), `stop_to_response` (stopped →
 full response), `json_decode`, and `stop_to_decoded_result` (stop shortcut → decoded).
+The recorder interval is also split into `recorder_start_call` (immediately around `startRunning()`),
+`start_return_to_first_buffer` (return → the first accepted buffer's callback entry), and
+`first_buffer_processing` (callback entry → accepted/copied PCM). Callback entry can precede the
+return of `startRunning()`, so the return-to-buffer interval is signed rather than clamped to zero.
+The optional `first_buffer` object contains `sample_count` (audio frames), `sample_rate_hz` (from
+that buffer's format description), and `audio_duration_ms` (`sample_count / sample_rate_hz × 1000`).
+This is the audio contained in the buffer, not the time it waited for delivery; no hardware capture
+timestamp or input-to-callback latency is inferred. Unknown/invalid geometry is omitted. Existing
+lines without these additions remain readable; new records append to the same log.
 Missing events and durations are omitted on partial failures/cancellations; failed JSON decoding
 has a start but no successful completion. Automatic stops and callers without shortcut timestamps
 omit the corresponding shortcut events. Writes wait for tracked capture/request work to settle,
