@@ -136,9 +136,12 @@ extension DictationSession {
     let transcriber = transcriber
     let press = pressContext
     let clock = clock
+    let timing = DictationTiming.current
+    timing?.beginWork()
     // Touches the actor nowhere: `PressContext` owns both the wait and the
     // value, so there is nothing to publish back and no `[weak self]`.
     upload = Task {
+      defer { timing?.endWork() }
       let resolved = await press?.wait(within: Self.contextWaitBudget, clock: clock)
       // The request gets the read if it arrived and the press-known half if it
       // didn't, rather than nothing: key terms and the recent turns never needed

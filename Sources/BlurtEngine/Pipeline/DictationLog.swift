@@ -120,10 +120,10 @@ public enum DictationLog {
     (defaultURL.path(percentEncoded: false) as NSString).abbreviatingWithTildeInPath
   }
 
-  /// Deletes both halves of the developer-mode log — the transcript corpus and
-  /// the sibling error log — and the directory they share once it's empty. The
+  /// Deletes the developer-mode logs — transcripts, errors, and event timings —
+  /// and the directory they share once it's empty. The
   /// file half of a full reset (`InstallReset`), matching what
-  /// `scripts/reset-install.sh` removes: a preinstall state has neither file,
+  /// `scripts/reset-install.sh` removes: a preinstall state has none of these files,
   /// and the logs are the one place transcripts are written to disk, so leaving
   /// them behind would be the most sensitive half of the reset going undone.
   ///
@@ -139,17 +139,17 @@ public enum DictationLog {
   /// the shell uses, so this needs no more reach than the engine itself.
   @discardableResult
   static func removeStoredLogs() -> Bool {
-    removeStoredLogs(dictations: defaultURL, errors: defaultErrorURL)
+    removeStoredLogs(dictations: defaultURL, errors: defaultErrorURL, timings: defaultTimingURL)
   }
 
   /// The addressable half of `removeStoredLogs()`, taking both URLs for the
   /// reason `append` takes one: otherwise the only way to exercise this is
   /// against the developer's real `~/Library/Logs`.
   @discardableResult
-  static func removeStoredLogs(dictations: URL, errors: URL) -> Bool {
+  static func removeStoredLogs(dictations: URL, errors: URL, timings: URL) -> Bool {
     let manager = FileManager.default
     var allRemoved = true
-    for url in [dictations, errors] where manager.fileExists(atPath: url.path(percentEncoded: false)) {
+    for url in [dictations, errors, timings] where manager.fileExists(atPath: url.path(percentEncoded: false)) {
       do {
         try manager.removeItem(at: url)
       } catch {
@@ -221,7 +221,7 @@ public enum DictationLog {
   /// dictation actually ended rather than whenever the serial queue reached it.
   ///
   /// Internal rather than `private` only because `appendError` lives in another
-  /// file and Swift's `private` is file-scoped; nothing outside the two entry
+  /// file and Swift's `private` is file-scoped; nothing outside the log entry
   /// points should call it.
   static func gated(store: DeveloperModeStore, _ write: @escaping @Sendable (Date) -> Void) {
     guard store.isEnabled else { return }

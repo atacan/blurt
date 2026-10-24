@@ -109,7 +109,7 @@ done
 # once the directory is empty, so every file Blurt writes there must be listed.
 DICTATION_LOG_DIR="$HOME/Library/Logs/Blurt"
 echo "==> Removing dictation logs ($DICTATION_LOG_DIR/{dictations,errors}.jsonl)"
-rm -f "$DICTATION_LOG_DIR/dictations.jsonl" "$DICTATION_LOG_DIR/errors.jsonl"
+rm -f "$DICTATION_LOG_DIR/dictations.jsonl" "$DICTATION_LOG_DIR/errors.jsonl" "$DICTATION_LOG_DIR/timings.jsonl"
 rmdir "$DICTATION_LOG_DIR" 2>/dev/null || true
 
 echo "Done. Relaunch Blurt for permission prompts to reappear."

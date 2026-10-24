@@ -1123,9 +1123,29 @@ sites, so a failure path added later is logged by construction; `.noTarget` and 
 a phase change rather than dropped. A failed append itself goes to `os_log` (never the entry, which
 would leak transcripts system-wide) — it's the one error that can't be reported through the error log,
 and it must never throw onto the dictation path. The Settings window's Advanced pane surfaces the
-switch and both paths, and both `scripts/reset-install.sh` and the in-app reset
-(`DictationLog.removeStoredLogs()`, via `InstallReset`) remove both files — plus the directory, once
+switch and all log paths, and both `scripts/reset-install.sh` and the in-app reset
+(`DictationLog.removeStoredLogs()`, via `InstallReset`) remove all three files — plus the directory, once
 it holds nothing else.
+
+**Dictation timings (macOS):** Developer Mode also writes `timings.jsonl` in the same directory,
+in release and development builds. Use Settings › Advanced › Developer mode, then **Show in Finder**.
+Each line carries a unique `id`, wall-clock start `ts`, terminal `outcome`, `events_ms` (monotonic
+millisecond offsets from the start event), and `durations_ms`. It carries no text or audio. The events
+are `start_shortcut`, `capture_requested`, `recorder_start_requested`, `first_audio_captured`,
+`recording_ready`, `http_request_started`, `stop_shortcut`, `capture_stop_requested`,
+`recording_stopped`, `response_received`, `json_decode_started`, and `json_decode_completed`.
+Shortcut times are captured when the event tap recognizes the action, before routing/queueing;
+first audio is the first accepted PCM buffer, including silence, rather than the later liveness
+confirmation. HTTP start is transport submission, not first bytes on the wire; response receipt is
+the full body, before validation/logging. Upload overlaps capture. Durations include `startup`
+(start shortcut → first buffer), `recorder_bring_up`, `first_buffer_to_ready`, `capture_to_request`,
+`stop` (stop shortcut → stopped, including Bluetooth tail linger), `stop_to_response` (stopped →
+full response), `json_decode`, and `stop_to_decoded_result` (stop shortcut → decoded).
+Missing events and durations are omitted on partial failures/cancellations; failed JSON decoding
+has a start but no successful completion. Automatic stops and callers without shortcut timestamps
+omit the corresponding shortcut events. Writes wait for tracked capture/request work to settle,
+without blocking the next dictation. `DictationTiming.current` propagates within engine tasks;
+Dispatch/audio callbacks hold the same trace explicitly. The API protocols remain unchanged.
 
 API key: stored in the macOS Keychain via **`APIKeyStore`**, a thin static facade over
 **`MemoizedKeyStore`** (which takes its storage as `read`/`write` closures, so the memo-and-write rules

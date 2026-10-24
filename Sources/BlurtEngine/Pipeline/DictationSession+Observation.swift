@@ -67,6 +67,7 @@ extension DictationSession {
     // before `.pasted` / `.noTarget` are claimed.
     if newPhase.isTerminal {
       cancelUpload()
+      finishTiming(for: newPhase)
     }
     phase = newPhase
     for continuation in continuations.values {

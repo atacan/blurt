@@ -1,4 +1,9 @@
 extension DictationSession {
+  struct SubmittedCommand: Sendable {
+    let command: Command
+    let timestamp: ContinuousClock.Instant?
+  }
+
   /// One host-initiated pipeline command, for `submit(_:)`. Mirrors the four
   /// async methods one-to-one; see each method's doc for semantics.
   /// `pressHandingBack` is `press(handingBack: true)`: the same dictation, whose
@@ -20,7 +25,7 @@ extension DictationSession {
   /// from one thread run in exactly the order they were submitted (they feed a
   /// single serial consumer — see `init`). Hosts that can `await` may call the
   /// async methods directly instead; the two styles hit the same serial queue.
-  public nonisolated func submit(_ command: Command) {
+  public nonisolated func submit(_ command: Command, at timestamp: ContinuousClock.Instant? = nil) {
     // A cancel acts *now*, not when its turn comes up. The consumer below is
     // serial by design, so a `.cancel` submitted during a press waits for that
     // press to finish before `cancel()` even runs — and since `MicCapture.start()`
@@ -31,16 +36,16 @@ extension DictationSession {
     // in order, and still executes in order — `performCancel` is idempotent
     // against a cancel already consumed.
     if command == .cancel { requestCancel() }
-    commandFeed.yield(command)
+    commandFeed.yield(SubmittedCommand(command: command, timestamp: timestamp))
   }
 
   /// Executes one submitted command by delegating to the public method it
   /// mirrors, so `submit` and direct calls share every guard and race rule.
-  func run(_ command: Command) async {
+  func run(_ command: Command, at timestamp: ContinuousClock.Instant? = nil) async {
     switch command {
-    case .press: await press()
-    case .pressHandingBack: await press(handingBack: true)
-    case .release: await release()
+    case .press: await press(at: timestamp)
+    case .pressHandingBack: await press(handingBack: true, at: timestamp)
+    case .release: await release(at: timestamp)
     case .cancel: await cancel()
     case .cancelRecording: await cancelRecording()
     }

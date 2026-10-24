@@ -27,12 +27,12 @@ import os
 final class DictationKeyTap {
   private static let logger = HostIdentity.current.logger("DictationKeyTap")
 
-  private let onStart: @MainActor () -> Void
-  private let onStop: @MainActor () -> Void
+  private let onStart: @MainActor (ContinuousClock.Instant) -> Void
+  private let onStop: @MainActor (ContinuousClock.Instant) -> Void
   private let onCancel: @MainActor () -> Void
   /// A tap latched the recording on. Dictation ignores it (the recording just
   /// keeps going); read-aloud's router reads it as "that was a tap, not a hold".
-  private let onLatch: @MainActor () -> Void
+  private let onLatch: @MainActor (ContinuousClock.Instant) -> Void
   /// Fired when a *state-recovery* reset (disabled-tap recovery, trigger
   /// rebinding) discards a live gate state: the key events that would have ended
   /// that dictation can no longer arrive, so the owner must end the capture —
@@ -66,10 +66,10 @@ final class DictationKeyTap {
   nonisolated(unsafe) private var tap: CFMachPort?
 
   init(
-    onStart: @escaping @MainActor () -> Void,
-    onStop: @escaping @MainActor () -> Void,
+    onStart: @escaping @MainActor (ContinuousClock.Instant) -> Void,
+    onStop: @escaping @MainActor (ContinuousClock.Instant) -> Void,
     onCancel: @escaping @MainActor () -> Void,
-    onLatch: @escaping @MainActor () -> Void,
+    onLatch: @escaping @MainActor (ContinuousClock.Instant) -> Void,
     onRecordingDiscarded: @escaping @MainActor () -> Void
   ) {
     self.onStart = onStart
@@ -220,8 +220,9 @@ final class DictationKeyTap {
     }
 
     guard let routed = routerEvent(type: type, event: event) else { return }
-    let now = reference.duration(to: ContinuousClock.now)
-    dispatch(router.handle(routed, at: now))
+    let instant = ContinuousClock.now
+    let now = reference.duration(to: instant)
+    dispatch(router.handle(routed, at: now), at: instant)
   }
 
   /// Reduces a `CGEvent` to the router's CoreGraphics-free event shape, or nil
@@ -238,12 +239,12 @@ final class DictationKeyTap {
     }
   }
 
-  private func dispatch(_ action: DictationKeyGate.Action) {
+  private func dispatch(_ action: DictationKeyGate.Action, at instant: ContinuousClock.Instant = .now) {
     switch action {
-    case .start: onStart()
-    case .stop: onStop()
+    case .start: onStart(instant)
+    case .stop: onStop(instant)
     case .cancel: onCancel()
-    case .latch: onLatch()
+    case .latch: onLatch(instant)
     case .none: break
     }
   }

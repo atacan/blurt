@@ -103,6 +103,7 @@ final class CaptureSessionRecorder: NSObject, @unchecked Sendable {
   private static let controlQueue = DispatchQueue(
     label: HostIdentity.current.queueLabel("MicCaptureSessionControl"))
   private let state = Mutex(Guarded())
+  private let timing: DictationTiming?
 
   /// Builds a recorder off the caller's executor, on `controlQueue`.
   ///
@@ -119,9 +120,10 @@ final class CaptureSessionRecorder: NSObject, @unchecked Sendable {
   /// invariant the whole warm-up design rests on, and the live suite can only
   /// assert it while the two steps are observable apart.
   static func make(pinnedUID: String?) async throws -> CaptureSessionRecorder {
-    try await withCheckedThrowingContinuation { continuation in
+    let timing = DictationTiming.current
+    return try await withCheckedThrowingContinuation { continuation in
       controlQueue.async {
-        continuation.resume(with: Result { try CaptureSessionRecorder(pinnedUID: pinnedUID) })
+        continuation.resume(with: Result { try CaptureSessionRecorder(pinnedUID: pinnedUID, timing: timing) })
       }
     }
   }
@@ -133,7 +135,8 @@ final class CaptureSessionRecorder: NSObject, @unchecked Sendable {
   /// authorization); "no device at all" instead leaves the session inputless,
   /// so `record()` answers false and `MicCapture.start()` surfaces the same
   /// `.audioCaptureFailed(noInputDevice)` it always has.
-  private init(pinnedUID: String?) throws {
+  private init(pinnedUID: String?, timing: DictationTiming?) throws {
+    self.timing = timing
     let (stream, continuation) = AsyncStream<Data>.makeStream(bufferingPolicy: .unbounded)
     frames = stream
     framesContinuation = continuation
@@ -213,6 +216,7 @@ final class CaptureSessionRecorder: NSObject, @unchecked Sendable {
     guard !session.inputs.isEmpty else { return false }
     return await withCheckedContinuation { continuation in
       Self.controlQueue.async {
+        self.timing?.record(.recorderStartRequested)
         self.session.startRunning()
         continuation.resume(returning: self.session.isRunning)
       }
@@ -296,6 +300,7 @@ final class CaptureSessionRecorder: NSObject, @unchecked Sendable {
     // post-`stopRunning()` audio in the first place.
     return state.withLock {
       framesContinuation.finish()
+      timing?.record(.recordingStopped)
       return $0.capturedBytes
     }
   }
@@ -367,6 +372,7 @@ extension CaptureSessionRecorder: AVCaptureAudioDataOutputSampleBufferDelegate {
     guard let chunk = Self.copyBytes(from: blockBuffer, length: length) else { return }
     let frameCount = CMSampleBufferGetNumSamples(sampleBuffer)
     state.withLock {
+      if $0.capturedBytes == 0 { timing?.record(.firstAudioCaptured) }
       $0.capturedBytes += chunk.count
       $0.frameCount += frameCount
       // Published *under* the lock, together with the tally, because the two

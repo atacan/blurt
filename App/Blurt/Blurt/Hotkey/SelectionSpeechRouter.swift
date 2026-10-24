@@ -26,6 +26,10 @@ final class SelectionSpeechRouter {
   private var speech: Task<Void, Never>?
   /// The pending `holdElapsed`, restarted by each press that may ask.
   private var holdTimer: Task<Void, Never>?
+  /// The selection read may defer and replay commands. Keep their original
+  /// event times in the same order, rather than stamping the eventual replay.
+  private var timedCommands: [(DictationSession.Command, ContinuousClock.Instant?)] = []
+  private var resolvingSelection = false
   /// `DictationKeyTap.syncAfterTerminalPhase`: a dictation ended without a key event.
   var syncGateAfterSession: () -> Void = {}
   /// `DictationKeyTap.resetGate`: a read ended without a key event.
@@ -35,15 +39,19 @@ final class SelectionSpeechRouter {
     self.session = session
   }
 
-  func submit(_ command: DictationSession.Command) {
+  func submit(_ command: DictationSession.Command, at timestamp: ContinuousClock.Instant? = nil) {
+    if command == .press, !resolvingSelection { timedCommands.removeAll() }
+    timedCommands.append((command, timestamp))
     perform(
       routing.submit(
         command, readAloudEnabled: SelectionSpeechStore().isEnabled, askEnabled: SelectionAskStore().isEnabled))
   }
 
   /// `DictationKeyTap`'s latch: the press was a tap.
-  func keyLatched() {
-    perform(routing.keyLatched())
+  func keyLatched(at timestamp: ContinuousClock.Instant) {
+    let actions = routing.keyLatched()
+    if actions.contains(.forward(.release)) { timedCommands.append((.release, timestamp)) }
+    perform(actions)
   }
 
   func sessionPhaseChanged(_ phase: PipelinePhase) {
@@ -53,27 +61,39 @@ final class SelectionSpeechRouter {
   private func perform(_ actions: [SelectionSpeechRouting.Action]) {
     for action in actions {
       switch action {
-      case .forward(let command): session.submit(command)
+      case .forward(let command):
+        let source: DictationSession.Command = command == .pressHandingBack ? .press : command
+        let index = timedCommands.firstIndex { $0.0 == source }
+        let timestamp = index.flatMap { timedCommands.remove(at: $0).1 }
+        session.submit(command, at: timestamp)
       case .readSelection:
+        // A new decision supersedes commands consumed by an earlier read.
+        timedCommands = Array(timedCommands.suffix(1))
+        resolvingSelection = true
         Task { [weak self] in
           let selection = await SelectionSpeaker.focusedSelection()
           guard let self else { return }
+          self.resolvingSelection = false
           self.perform(self.routing.selectionResolved(selection))
         }
       case .startHoldTimer: startHoldTimer()
       case .speak(let text):
+        timedCommands.removeAll()
         // Read per press, like the switch itself, so a Settings change applies
         // to the next read.
         let style = ReadAloudStyleStore().style
         run { [speaker] in try await speaker.speak(text, style: style) }
       case .answer(let request, let selection):
+        timedCommands.removeAll()
         let style = ReadAloudStyleStore().style
         run { [speaker] in try await speaker.answer(request, about: selection, style: style) }
       case .stopSpeech:
         speech?.cancel()
         speech = nil
       case .syncGateAfterSession: syncGateAfterSession()
-      case .resetGate: resetGate()
+      case .resetGate:
+        timedCommands.removeAll()
+        resetGate()
       }
     }
   }

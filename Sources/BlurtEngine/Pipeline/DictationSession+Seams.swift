@@ -23,6 +23,17 @@ extension DictationSession {
   /// substitute one. Each `Seams` value is still immutable in practice — the
   /// session stores one and never writes to it.
   struct Seams: Sendable {
+    /// Timing is local and opt-in, including in release builds. iPhone hosts
+    /// retain their existing flow; its always-on microphone needs other events.
+    var makeTiming: @Sendable (ContinuousClock.Instant?) -> DictationTiming? = { timestamp in
+      #if os(macOS)
+        guard DeveloperModeStore().isEnabled else { return nil }
+        return DictationTiming(startedAt: timestamp) { DictationLog.appendTiming($0) }
+      #else
+        return nil
+      #endif
+    }
+
     /// Captures the frontmost application — the paste target, and the context's
     /// app name. On the main actor because it's an AppKit read. Off macOS there
     /// is no frontmost app to read (a keyboard cannot see its host), so the

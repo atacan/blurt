@@ -185,6 +185,7 @@ public actor MicCapture: MicCaptureProtocol {
       inputPowerDB: { recorder.meteredPowerDB() })
 
     try checkStillWanted(since: generationBeforeBringUp, stage: "the liveness wait")
+    if gap != nil { DictationTiming.current?.record(.recordingReady) }
 
     // The gate's outcome, worded in `MicLiveness` so the line a field report is
     // read off is unit-tested. See `logSummary` for what it has to carry.

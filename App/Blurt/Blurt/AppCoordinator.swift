@@ -159,10 +159,10 @@ final class AppCoordinator {
     // as before.
     let router = SelectionSpeechRouter(session: session)
     keyTap = DictationKeyTap(
-      onStart: { router.submit(.press) },
-      onStop: { router.submit(.release) },
+      onStart: { router.submit(.press, at: $0) },
+      onStop: { router.submit(.release, at: $0) },
       onCancel: { router.submit(.cancel) },
-      onLatch: { router.keyLatched() },
+      onLatch: { router.keyLatched(at: $0) },
       // Recovery-only teardown; `cancelRecording()`'s doc owns the rationale.
       onRecordingDiscarded: { router.submit(.cancelRecording) }
     )

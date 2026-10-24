@@ -1,15 +1,25 @@
 import Dispatch
+import Foundation
 
 // The press half of the pipeline — everything between the key going down and
 // `.recording` being claimed, including the mic bring-up that `.connecting`
 // covers. Split from `DictationSession.swift` to stay within the lint
 // file-length budget, mirroring `+Pipeline` (the release half). Members it
 // reaches are internal, not private: file-scoped access can't cross the split.
-// `Dispatch`, not `Foundation`: the only thing here from outside the module is
-// `BlockingIPC.queue.async` (see `BlockingIPC` for why that read is off-pool).
+// `BlockingIPC.queue.async` keeps cross-process reads off the cooperative pool.
 extension DictationSession {
-  func performPress(handingBack: Bool) async {
+  func performPress(handingBack: Bool, at timestamp: ContinuousClock.Instant?) async {
     guard phase.isTerminal else { return }
+    let timing = seams.makeTiming(timestamp)
+    self.timing = timing
+    timing?.beginWork()
+    defer { timing?.endWork() }
+    await DictationTiming.$current.withValue(timing) {
+      await startPress(handingBack: handingBack)
+    }
+  }
+
+  private func startPress(handingBack: Bool) async {
     handsBackTranscript = handingBack
     // Refuse the press before any capture begins when the host reports a
     // blocker (e.g. no API key saved): recording an utterance that can only
@@ -56,7 +66,7 @@ extension DictationSession {
       // `async let`, so a cancel still reaches it: the child inherits this task's
       // cancellation, which is what `cancel()`'s `.connecting` branch relies on
       // to preempt the wait.
-      async let started = mic.start()
+      async let started = startCapture()
       await beginContextCapture()
       // Only now join the bring-up. Everything above ran while the mic was
       // coming up; the phase still flips to `.recording` only once `start()`
@@ -136,6 +146,11 @@ extension DictationSession {
         setPhase(.failed(.audioCaptureFailed(underlying: error)))
       }
     }
+  }
+
+  private nonisolated func startCapture() async throws -> AsyncStream<Data> {
+    DictationTiming.current?.record(.captureRequested)
+    return try await mic.start()
   }
 
   /// Captures the paste target and kicks off the press-time AX field-context

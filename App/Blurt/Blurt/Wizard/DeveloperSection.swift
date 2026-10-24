@@ -164,11 +164,12 @@ struct MaintenanceSection: View {
         // also why the first path is followed by a plain space, not a comma.
         Text(
           "Logs each dictation to \(DictationLog.defaultDisplayPath) "
-            + "and each failure to \(DictationLog.defaultErrorDisplayPath)"
+            + "and each failure to \(DictationLog.defaultErrorDisplayPath). "
+            + "Event timings are saved to \(DictationLog.defaultTimingDisplayPath)"
         )
         .textSelection(.enabled)
       } else {
-        Text("Developer mode keeps a local log of each dictation and failure.")
+        Text("Developer mode keeps local logs of dictations, failures, and event timings.")
       }
     }
   }

@@ -31,7 +31,8 @@ public actor DictationSession {
   /// Feed behind the nonisolated `submit(_:)` (see `+Commands`): commands are
   /// yielded synchronously — preserving the caller's emit order — and consumed
   /// one at a time by the task spawned in `init`.
-  nonisolated let commandFeed: AsyncStream<Command>.Continuation
+  nonisolated let commandFeed: AsyncStream<SubmittedCommand>.Continuation
+  var timing: DictationTiming?
 
   let mic: MicCaptureProtocol
   let transcriber: TranscriberProtocol
@@ -220,7 +221,7 @@ public actor DictationSession {
     self.readinessCheck = readinessCheck
     self.onTranscriptDelivered = onTranscriptDelivered
     self.seams = seams
-    let (commands, feed) = AsyncStream.makeStream(of: Command.self)
+    let (commands, feed) = AsyncStream.makeStream(of: SubmittedCommand.self)
     self.commandFeed = feed
     // Consumes `submit(_:)`'s feed one command at a time, in emit order. Weakly
     // held so the consumer never keeps the session alive; `deinit` finishes the
@@ -228,7 +229,7 @@ public actor DictationSession {
     Task { [weak self] in
       for await command in commands {
         guard let self else { return }
-        await self.run(command)
+        await self.run(command.command, at: command.timestamp)
       }
     }
   }
@@ -239,6 +240,7 @@ public actor DictationSession {
     // otherwise leave its request to be wound down by continuation deallocation
     // rather than by the rule.
     upload?.cancel()
+    timing?.finish(outcome: .abandoned)
     commandFeed.finish()
     for continuation in continuations.values {
       continuation.finish()
@@ -266,21 +268,25 @@ public actor DictationSession {
     return task
   }
 
-  public func press(handingBack: Bool = false) async {
+  public func press(handingBack: Bool = false, at timestamp: ContinuousClock.Instant? = nil) async {
     // Published before awaiting so a cancel can preempt the mic bring-up — see
     // `inFlightPress`. Cleared on the way out, but only if it's still ours.
-    let task = chain { await self.performPress(handingBack: handingBack) }
+    let task = chain { await self.performPress(handingBack: handingBack, at: timestamp) }
     inFlightPress = task
     await task.value
     clearInFlightPress(task)
   }
 
-  public func release() async {
-    await enqueue { await self.performRelease() }
+  public func release(at timestamp: ContinuousClock.Instant? = nil) async {
+    await enqueue { await self.performRelease(at: timestamp) }
   }
 
-  private func performRelease() async {
+  private func performRelease(at timestamp: ContinuousClock.Instant?) async {
     guard phase == .recording else { return }
+    let timing = timing
+    timing?.beginWork()
+    defer { timing?.endWork() }
+    if let timestamp { timing?.record(.stopShortcut, at: timestamp) }
     cancelAutoRelease()
     // Flip the phase before stopping the mic, not after: the stop chime and
     // the pill's "Transcribing…" ride this transition, and mic.stop() waits out
@@ -291,7 +297,8 @@ public actor DictationSession {
     setPhase(.transcribing)
     let recordedBytes: Int
     do {
-      recordedBytes = try await mic.stop()
+      timing?.record(.captureStopRequested)
+      recordedBytes = try await DictationTiming.$current.withValue(timing) { try await mic.stop() }
     } catch {
       // Both exits below set a terminal phase, and `setPhase` cancels the
       // in-flight request there — so a conformer whose `stop()` throws without
@@ -354,6 +361,9 @@ public actor DictationSession {
   /// Shared tail of the cancel ops once the guards agree there is a live
   /// recording to tear down.
   func stopAndCancel() async {
+    let timing = timing
+    timing?.beginWork()
+    defer { timing?.endWork() }
     cancelAutoRelease()
     // Before the mic teardown, not after: `cancelCapture()` finishes the frame
     // stream, and a still-live upload would read that as "the utterance ended",

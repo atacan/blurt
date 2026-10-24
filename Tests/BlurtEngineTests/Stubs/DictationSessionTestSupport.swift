@@ -57,6 +57,7 @@ func testSeams(
   log: RecordedLog = RecordedLog()
 ) -> DictationSession.Seams {
   DictationSession.Seams(
+    makeTiming: { _ in nil },
     captureFrontmost: { frontmost },
     captureFieldContext: { field },
     logTranscript: { log.recordTranscript($0, context: $1) },
